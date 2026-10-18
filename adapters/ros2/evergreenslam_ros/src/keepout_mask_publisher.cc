@@ -41,6 +41,36 @@ bool Inside(const agent::Polygon2d& polygon, const Eigen::Vector2d& p) {
   return inside;
 }
 
+bool IntersectsCell(const agent::Polygon2d& polygon, const Eigen::Vector2d& lo,
+                    const Eigen::Vector2d& hi) {
+  if (Inside(polygon, (lo + hi) * 0.5)) {
+    return true;
+  }
+  for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+    const Eigen::Vector2d& start = polygon[j];
+    const Eigen::Vector2d delta = polygon[i] - start;
+    double enter = 0.0;
+    double leave = 1.0;
+    for (int axis = 0; axis < 2; ++axis) {
+      if (delta[axis] == 0.0) {
+        if (start[axis] < lo[axis] || start[axis] > hi[axis]) {
+          leave = -1.0;
+          break;
+        }
+      } else {
+        const double a = (lo[axis] - start[axis]) / delta[axis];
+        const double b = (hi[axis] - start[axis]) / delta[axis];
+        enter = std::max(enter, std::min(a, b));
+        leave = std::min(leave, std::max(a, b));
+      }
+    }
+    if (enter <= leave) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool SameMask(const nav_msgs::msg::OccupancyGrid& a, const nav_msgs::msg::OccupancyGrid& b) {
   return a.info.width == b.info.width && a.info.height == b.info.height &&
          a.info.resolution == b.info.resolution &&
@@ -95,16 +125,18 @@ std::optional<nav_msgs::msg::OccupancyGrid> BuildKeepoutMask(
       lo = lo.cwiseMin(p);
       hi = hi.cwiseMax(p);
     }
-    const int col0 = std::max(0, static_cast<int>(std::floor((lo.x() - min.x()) / resolution)));
+    const int col0 =
+        std::max(0, static_cast<int>(std::floor((lo.x() - min.x()) / resolution)) - 1);
     const int col1 =
         std::min(width - 1, static_cast<int>(std::floor((hi.x() - min.x()) / resolution)));
-    const int row0 = std::max(0, static_cast<int>(std::floor((lo.y() - min.y()) / resolution)));
+    const int row0 =
+        std::max(0, static_cast<int>(std::floor((lo.y() - min.y()) / resolution)) - 1);
     const int row1 =
         std::min(height - 1, static_cast<int>(std::floor((hi.y() - min.y()) / resolution)));
     for (int row = row0; row <= row1; ++row) {
       for (int col = col0; col <= col1; ++col) {
-        const Eigen::Vector2d centre = min + resolution * Eigen::Vector2d(col + 0.5, row + 0.5);
-        if (Inside(polygon, centre)) {
+        const Eigen::Vector2d cell_min = min + resolution * Eigen::Vector2d(col, row);
+        if (IntersectsCell(polygon, cell_min, cell_min + Eigen::Vector2d::Constant(resolution))) {
           mask.data[static_cast<size_t>(row) * width + col] = kKeepout;
         }
       }
@@ -133,6 +165,12 @@ std::optional<nav_msgs::msg::OccupancyGrid> NextKeepoutMask(
   }
   std::vector<agent::Polygon2d> polygons;
   for (const agent::ResolvedZone& zone : *zones) {
+    if (zone.reason.has_value() ||
+        (zone.kind == agent::ZoneStore::kKeepout && !zone.polygon_xy.has_value())) {
+      LOG_EVERY_N(WARNING, 100) << "invalid or unresolved keep-out zone " << zone.path
+                                << ": previous mask kept";
+      return std::nullopt;
+    }
     if (zone.IsActiveKeepout()) {
       polygons.push_back(*zone.polygon_xy);
     }

@@ -25,7 +25,7 @@
 
 namespace evergreenslam::ros2 {
 
-// Cells whose centres lie inside any polygon are 100 (lethal to nav2's KeepoutFilter), the rest 0.
+// Cells intersecting any polygon, including its boundary, are 100 (lethal to nav2's KeepoutFilter), the rest 0.
 // Bounds: the polygons' bounding boxes plus `margin_m`; no polygon gives a 1x1 grid of 0. The
 // resolution doubles until the grid fits `max_cells`; nullopt when even `max_resolution` does not.
 std::optional<nav_msgs::msg::OccupancyGrid> BuildKeepoutMask(
@@ -35,7 +35,7 @@ std::optional<nav_msgs::msg::OccupancyGrid> BuildKeepoutMask(
 nav_msgs::msg::OccupancyGrid ClearingKeepoutMask();
 
 // The mask one graph tick publishes; nullopt leaves nav2's current mask in place: positions are
-// untrusted (frozen base, not aligned), the scan was incomplete, the mask is too large, or it
+// untrusted (frozen base, not aligned), the scan was incomplete, a zone is invalid/unresolved, the mask is too large, or it
 // equals `last`. `zones` is nullopt for an incomplete scan.
 std::optional<nav_msgs::msg::OccupancyGrid> NextKeepoutMask(
     const agent::BaseAlignment& alignment,

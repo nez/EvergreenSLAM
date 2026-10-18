@@ -56,7 +56,7 @@ double RealTimeCorrelativeScanMatcher::Match(const sensor::PointCloud& point_clo
 
 void RealTimeCorrelativeScanMatcher::UpdateSearchParameters(const mapping::GridMapu8& grid_map,
                                                             const sensor::PointCloud& point_cloud) {
-  DCHECK_EQ(grid_map.unknown_value(), mapping::kUnknownValue);
+  DCHECK_LT(grid_map.unknown_value(), mapping::kUpdateMarker);
   if (use_manual_resolution_) {
     return;
   }
@@ -72,7 +72,13 @@ void RealTimeCorrelativeScanMatcher::UpdateSearchParameters(const mapping::GridM
 }
 
 size_t RealTimeCorrelativeScanMatcher::NumAngularCandidates() const {
-  return static_cast<size_t>(2 * angular_search_window_ / angular_resolution_) + 1;
+  return 2 * static_cast<size_t>(std::ceil(angular_search_window_ / angular_resolution_)) + 1;
+}
+
+double RealTimeCorrelativeScanMatcher::AngularOffset(int index) const {
+  // A symmetric search must include the prediction exactly, even on axis-aligned walls.
+  const int half = static_cast<int>(NumAngularCandidates() / 2);
+  return (index - half) * angular_resolution_;
 }
 
 std::vector<std::vector<Eigen::Array2i>> RealTimeCorrelativeScanMatcher::PrecomputeRotatedPoints(
@@ -82,8 +88,8 @@ std::vector<std::vector<Eigen::Array2i>> RealTimeCorrelativeScanMatcher::Precomp
   std::vector<std::vector<Eigen::Array2i>> rotated_points;
   rotated_points.reserve(size);
 
-  double delta_theta = -angular_search_window_;
-  for (size_t i = 0; i < size; i++, delta_theta += angular_resolution_) {
+  for (size_t i = 0; i < size; ++i) {
+    const double delta_theta = AngularOffset(static_cast<int>(i));
     // Rotation before translation, i.e. about the sensor itself, which is what
     // the reported pose has to mean.
     Eigen::Affine2d transform = Eigen::Affine2d::Identity();
@@ -145,15 +151,14 @@ double RealTimeCorrelativeScanMatcher::GetBestFromCandidates(
         translation_penalty_weight_ * std::hypot(candidate.x_offset, candidate.y_offset) *
             linear_resolution_ -
         rotation_penalty_weight_ *
-            std::abs(-angular_search_window_ + candidate.theta_index * angular_resolution_);
+            std::abs(AngularOffset(candidate.theta_index));
     if (penalized > best_penalized) {
       best_penalized = penalized;
       best_candidate = &candidate;
     }
   }
 
-  const double delta_theta =
-      -angular_search_window_ + best_candidate->theta_index * angular_resolution_;
+  const double delta_theta = AngularOffset(best_candidate->theta_index);
 
   initial_pose.translation() += Eigen::Vector2d(best_candidate->x_offset * linear_resolution_,
                                                 best_candidate->y_offset * linear_resolution_);

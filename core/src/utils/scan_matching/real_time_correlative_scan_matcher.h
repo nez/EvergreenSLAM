@@ -55,6 +55,7 @@ class RealTimeCorrelativeScanMatcher {
                               const sensor::PointCloud& point_cloud);
 
   size_t NumAngularCandidates() const;
+  double AngularOffset(int index) const;
 
   std::vector<std::vector<Eigen::Array2i>> PrecomputeRotatedPoints(
       const sensor::PointCloud& point_cloud, const mapping::GridMapu8& grid_map,
