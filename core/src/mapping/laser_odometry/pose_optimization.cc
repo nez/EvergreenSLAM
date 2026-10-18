@@ -11,6 +11,11 @@
 
 #include "mapping/laser_odometry/pose_optimization.h"
 
+#include <algorithm>
+#include <utility>
+
+#include "mapping/grid_mapping/probability_values.h"
+
 namespace evergreenslam::mapping {
 
 PoseOptimization::PoseOptimization(const PoseOptimizationOption& option)
@@ -29,12 +34,25 @@ double PoseOptimization::Match(const sensor::PointCloud& point_cloud, const Grid
     return 0.0;
   }
 
+  // Unknown space is a neutral prior for local alignment, not evidence of free space.
+  // Penalizing it locks sparse axis-aligned maps onto the repeating beam pattern.
+  auto cells = grid_map.data();
+  const uint8_t unknown = ProbabilityToValue(0.5);
+  std::replace(cells.begin(), cells.end(), grid_map.unknown_value(), unknown);
+  const GridMapu8 matching_map(std::move(cells), grid_map.width(), grid_map.height(),
+                             grid_map.resolution(), grid_map.origin_x(), grid_map.origin_y(),
+                             unknown);
   const Eigen::Affine2d predicted_pose = pose;
-  const double score = correlative_matcher_.Match(point_cloud, grid_map, pose);
+  correlative_matcher_.Match(point_cloud, matching_map, pose);
+  double score = 0.0;
+  for (const auto& point : point_cloud) {
+    score += ValueToProbability(grid_map.GetValueAtPoint(pose * point.point));
+  }
+  score /= point_cloud.size();
   if (coarse_pose != nullptr) {
     *coarse_pose = pose;
   }
-  ceres_matcher_.Match(point_cloud, grid_map, pose, predicted_pose);
+  ceres_matcher_.Match(point_cloud, matching_map, pose, predicted_pose);
   return score;
 }
 

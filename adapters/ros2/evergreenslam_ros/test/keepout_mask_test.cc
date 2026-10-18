@@ -88,6 +88,24 @@ TEST(KeepoutMaskTest, FarApartZonesCoarsenTheGridAndAbsurdOnesAreRefused) {
   EXPECT_FALSE(BuildKeepoutMask({near, absurd}, 0.05, 0.5, 0.8, 4e6).has_value());
 }
 
+TEST(KeepoutMaskTest, NarrowZonesAndEdgesSurviveRasterizationAndCoarsening) {
+  const agent::Polygon2d strip = {{0.0, 0.0}, {0.01, 0.0}, {0.01, 1.0}, {0.0, 1.0}};
+  for (double resolution : {0.05, 0.1, 0.8}) {
+    const auto mask = BuildKeepoutMask({strip}, resolution, 0.5, 0.8, 4e6);
+    ASSERT_TRUE(mask.has_value());
+    EXPECT_EQ(CellAt(*mask, 0.005, 0.5), 100) << resolution;
+  }
+  const auto coarse = BuildKeepoutMask({strip}, 0.05, 0.5, 0.8, 10);
+  ASSERT_TRUE(coarse.has_value());
+  EXPECT_FLOAT_EQ(coarse->info.resolution, 0.8f);
+  EXPECT_EQ(CellAt(*coarse, 0.005, 0.5), 100);
+  const agent::Polygon2d triangle = {{0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0}};
+  const auto mask = BuildKeepoutMask({triangle}, 0.05, 0.5, 0.8, 4e6);
+  ASSERT_TRUE(mask.has_value());
+  EXPECT_EQ(CellAt(*mask, 0.51, 0.51), 100);  // The cell intersects the diagonal edge.
+  EXPECT_EQ(CellAt(*mask, 0.8, 0.8), 0);
+}
+
 agent::ResolvedZone Zone(const std::string& kind, std::optional<agent::Polygon2d> xy) {
   agent::ResolvedZone zone;
   zone.kind = kind;
@@ -97,8 +115,7 @@ agent::ResolvedZone Zone(const std::string& kind, std::optional<agent::Polygon2d
 
 TEST(KeepoutMaskTest, TickPublishesOnlyTrustedChangedMasks) {
   const agent::Polygon2d square = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}};
-  const std::vector<agent::ResolvedZone> zones = {Zone("keepout", square), Zone("slowdown", square),
-                                                  Zone("keepout", std::nullopt)};
+  const std::vector<agent::ResolvedZone> zones = {Zone("keepout", square), Zone("slowdown", square)};
   const agent::BaseAlignment aligned{true, true};
   const agent::BaseAlignment unaligned{true, false};
   const agent::BaseAlignment no_base{false, false};
@@ -119,6 +136,30 @@ TEST(KeepoutMaskTest, TickPublishesOnlyTrustedChangedMasks) {
   ASSERT_TRUE(cleared.has_value());
   EXPECT_EQ(cleared->data, std::vector<int8_t>{0});
   EXPECT_FALSE(NextKeepoutMask(aligned, std::vector<agent::ResolvedZone>{}, clear).has_value());
+}
+
+TEST(KeepoutMaskTest, InvalidOrUnresolvedZonesPreserveThePreviousMask) {
+  const agent::Polygon2d square = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}};
+  const auto previous = *BuildKeepoutMask({square}, 0.05, 0.5, 0.8, 4e6);
+  const agent::BaseAlignment aligned{true, true};
+  for (const std::string reason :
+       {"bad_zone_file", "too_large", "unknown_anchor", "frame_mismatch", "unknown_kind"}) {
+    auto broken = Zone(reason == "bad_zone_file" ? "" : "keepout", std::nullopt);
+    broken.reason = reason;
+    EXPECT_FALSE(NextKeepoutMask(aligned, std::vector<agent::ResolvedZone>{broken}, previous)
+                     .has_value()) << reason;
+    EXPECT_FALSE(NextKeepoutMask(aligned,
+                                std::vector<agent::ResolvedZone>{Zone("keepout", square), broken},
+                                previous).has_value()) << reason;
+  }
+  auto mismatched = Zone("keepout", square);
+  mismatched.reason = "frame_mismatch";
+  EXPECT_FALSE(NextKeepoutMask(aligned, std::vector<agent::ResolvedZone>{mismatched}, previous)
+                   .has_value());
+  EXPECT_FALSE(NextKeepoutMask(aligned,
+                              std::vector<agent::ResolvedZone>{Zone("keepout", std::nullopt)},
+                              previous).has_value());
+  EXPECT_TRUE(NextKeepoutMask(aligned, std::vector<agent::ResolvedZone>{}, previous).has_value());
 }
 
 class RclcppTest : public ::testing::Test {

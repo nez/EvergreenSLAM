@@ -66,7 +66,7 @@ class GridMatchCostFunction {
     enum { DATA_DIMENSION = 1 };
 
     explicit GridArrayAdapter(const mapping::GridMapu8& grid_map) : grid_map_(grid_map) {
-      DCHECK_EQ(grid_map.unknown_value(), mapping::kUnknownValue);
+      DCHECK_LT(grid_map.unknown_value(), mapping::kUpdateMarker);
       // Indexed by the raw cell byte, marker included, so it spans the byte.
       for (int value = 0; value < mapping::kReadTableSize; ++value) {
         cost_table_[value] = 1.0 - mapping::ValueToProbability(static_cast<uint8_t>(value));

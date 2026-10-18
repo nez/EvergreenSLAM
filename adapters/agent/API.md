@@ -651,11 +651,12 @@ new row); `next_id` stays past the refused id, which is never issued.
 `adapters/ros2/evergreenslam_ros/src/keepout_mask_publisher.{h,cc}`, with
 `EVERGREENSLAM_WITH_AGENT` and an agent host. On the graph timer (`map_publish_period`) the
 executor thread scans the zone files and enqueues one task: skipped (nav2 keeps the last mask)
-while `has_frozen_base && !aligned_to_base` or when the scan was incomplete; otherwise the keepout
+while `has_frozen_base && !aligned_to_base`, when the scan was incomplete, or when a zone
+has an error or a keepout has no resolved polygon; otherwise the keepout
 zones with a `polygon_xy` become a
 `nav_msgs/OccupancyGrid` on `keepout_mask_topic` (`keepout_filter_mask`), `map_frame`, QoS
-transient_local + reliable, 0.05 m over the polygons' bounding boxes + 0.5 m, cell centre inside
-→ `100`, else `0`; the resolution doubles while the grid exceeds 4e6 cells, and past 0.8 m the
+transient_local + reliable, 0.05 m over the polygons' bounding boxes + 0.5 m. A cell intersecting
+the polygon or its boundary becomes `100`, else `0`; the resolution doubles while the grid exceeds 4e6 cells, and past 0.8 m the
 last mask stays (logged). No zone → a 1x1 grid of `0` (clears a previous mask); unchanged masks
 are not republished. The publisher sends that clearing grid when it is created, so a map switch
 drops the previous map's zones at once; nothing else is published until the new

@@ -202,19 +202,55 @@ TEST(LocalTrajectoryBuilderTest, BuildsAMapWithWallsAndFreeSpace) {
   EXPECT_NEAR(ValueToProbability(snapshot.GetValueAtPoint(outside)), kUnknownProbability, 1e-6);
 }
 
+TEST(LocalTrajectoryBuilderTest, LocalMatchingPreservesEvidenceScoresAndGrid) {
+  for (uint8_t value : {kUnknownValue, ProbabilityToValue(0.49), ProbabilityToValue(0.8)}) {
+    GridMapu8 grid(std::vector<uint8_t>(1600, value), 40, 40, 0.05, -1.0, -1.0, kUnknownValue);
+    sensor::PointCloud cloud;
+    cloud.push_back(sensor::Point2d{Eigen::Vector2d(0.1, 0.1)});
+    cloud.push_back(sensor::Point2d{Eigen::Vector2d(-0.1, -0.1)});
+    PoseOptimization matcher;
+    Eigen::Affine2d pose = Eigen::Affine2d::Identity();
+    EXPECT_DOUBLE_EQ(matcher.Match(cloud, grid, pose), ValueToProbability(value));
+    EXPECT_TRUE(pose.matrix().isApprox(Eigen::Matrix3d::Identity()));
+    EXPECT_EQ(grid.data(), std::vector<uint8_t>(1600, value));
+    EXPECT_EQ(grid.unknown_value(), kUnknownValue);
+  }
+}
+
+TEST(LocalTrajectoryBuilderTest, CorrelativeSearchIncludesThePredictedHeading) {
+  GridMapu8 grid(std::vector<uint8_t>(400, kMaxValue), 20, 20, 0.05, -0.5, -0.5,
+                 kUnknownValue);
+  sensor::PointCloud cloud;
+  cloud.push_back(sensor::Point2d{Eigen::Vector2d(0.1, 0.1)});
+  utils::scan_matching::RealTimeCorrelativeScanMatcher matcher(0.0, 0.04);
+  matcher.SetManualResolution(0.03, 0.05);
+  matcher.SetMotionPenalty(0.0, 1.0);
+  Eigen::Affine2d pose = Eigen::Affine2d::Identity();
+  matcher.Match(cloud, grid, pose);
+  EXPECT_DOUBLE_EQ(transform::GetYaw(pose), 0.0);
+}
+
 // Accelerates from rest to 0.5 m/s along `heading`, then holds the speed; the last scan's result.
-std::unique_ptr<LocalTrajectoryBuilder::MatchingResult> RunStraight(double heading) {
+std::unique_ptr<LocalTrajectoryBuilder::MatchingResult> RunStraight(
+    double heading, const LocalTrajectoryBuilderOption& options = LocalTrajectoryBuilderOption()) {
   constexpr int kNumScans = 60;
   constexpr int kNumBeams = 360;
   constexpr double kSpeed = 0.5;
+  // Keep every heading inside the room throughout the acceleration and cruise.
+  const Eigen::Vector2d start(std::cos(heading) >= 0.0 ? 2.0 : 8.0,
+                              std::sin(heading) >= 0.0 ? 2.0 : 6.0);
 
-  LocalTrajectoryBuilder builder{LocalTrajectoryBuilderOption()};
+  LocalTrajectoryBuilder builder(options);
   std::unique_ptr<LocalTrajectoryBuilder::MatchingResult> result;
   for (int i = 0; i < kNumScans; ++i) {
     const double t = 0.1 * i;
     const double distance = t < 1.0 ? 0.5 * kSpeed * t * t : kSpeed * (t - 0.5);
     const Eigen::Affine2d world_pose = transform::FromXYTheta(
-        2.0 + distance * std::cos(heading), 2.0 + distance * std::sin(heading), heading);
+        start.x() + distance * std::cos(heading), start.y() + distance * std::sin(heading), heading);
+    EXPECT_GT(world_pose.translation().x(), kRoomMinX);
+    EXPECT_LT(world_pose.translation().x(), kRoomMaxX);
+    EXPECT_GT(world_pose.translation().y(), kRoomMinY);
+    EXPECT_LT(world_pose.translation().y(), kRoomMaxY);
     result = builder.AddScan(ScanTime(i), SimulateScan(world_pose, kNumBeams));
     if (result == nullptr) {
       ADD_FAILURE() << "scan " << i << " dropped";
@@ -224,7 +260,7 @@ std::unique_ptr<LocalTrajectoryBuilder::MatchingResult> RunStraight(double headi
   return result;
 }
 
-// Off the room's axes: heading 0 is DISABLED_StraightRunAlongTheRoomAxis, an open frontend issue.
+// Also exercise a heading away from the room axes.
 TEST(LocalTrajectoryBuilderTest, ReportsTheFilterVelocityOnAStraightRun) {
   const auto result = RunStraight(0.3);
   ASSERT_NE(result, nullptr);
@@ -234,13 +270,21 @@ TEST(LocalTrajectoryBuilderTest, ReportsTheFilterVelocityOnAStraightRun) {
   EXPECT_NEAR(result->acceleration.x(), 0.0, 0.5);
 }
 
-// Repro, not yet understood: observed staying at the origin (score ~0.35) when the run is parallel
-// to a wall. Enable once the predictor/matcher from rest is investigated.
-TEST(LocalTrajectoryBuilderTest, DISABLED_StraightRunAlongTheRoomAxis) {
-  const auto result = RunStraight(0.0);
-  ASSERT_NE(result, nullptr);
-  EXPECT_NEAR(result->local_pose.translation().x(), 0.5 * (5.9 - 0.5), 0.1);
-  EXPECT_NEAR(result->velocity.x(), 0.5, 0.1);
+TEST(LocalTrajectoryBuilderTest, StraightRunAlongTheRoomAxes) {
+  for (double angular_window : {0.0, PoseOptimizationOption().angular_search_window}) {
+    SCOPED_TRACE(angular_window);
+    LocalTrajectoryBuilderOption options;
+    options.pose_optimization_option.angular_search_window = angular_window;
+    for (double heading : {0.0, M_PI_2, M_PI, -M_PI_2}) {
+      SCOPED_TRACE(heading);
+      const auto result = RunStraight(heading, options);
+      ASSERT_NE(result, nullptr);
+      EXPECT_NEAR(result->local_pose.translation().x(), 0.5 * (5.9 - 0.5), 0.1);
+      EXPECT_NEAR(result->local_pose.translation().y(), 0.0, 0.1);
+      EXPECT_NEAR(result->velocity.x(), 0.5, 0.1);
+      EXPECT_NEAR(result->velocity.y(), 0.0, 0.05);
+    }
+  }
 }
 
 // The filter keeps velocity in the body frame. Here the heading climbs to 0.6 rad while the

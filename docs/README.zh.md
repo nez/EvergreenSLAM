@@ -87,6 +87,8 @@ base 0.75 (cover 98%)  since base match 0.0m  match 0.70 (avg 0.70)
 
 纯 2D，全部 `double`，位姿用 `Eigen::Affine2d`。激光里程计用相关性匹配加 Ceres 精修，子图是概率栅格，位姿图用分支定界回环加 Ceres 优化，在此之上是按 session 进行的删减、冻结，以及原子提交的持久化。`core/` 不依赖 ROS，ROS 2 只是其中一个适配器。
 
+本地匹配使用将未知格设为中性先验的临时栅格，避免稀疏、轴对齐的地图把运动锁在重复的激光束图案上。存储的地图、全局匹配和报告的占据概率分数保持原有语义。前端回归测试使用默认和零宽度角度搜索窗口，覆盖沿房间四个轴向从静止开始的直线运动。
+
 ## 实机测试
 
 2026-09-29，由 Claude Code 驱动上述平台，在一套住宅中完成了一次任务。agent 使用一个封装了 `egs` 和 Nav2 导航的小工具（`mochibot`），以及一个在本仓库 `evergreenslam` skill 基础上针对这套住宅编写的 skill（`robot-places`）。对话使用中文，各步骤及对应的 `egs` 调用如下：
@@ -119,7 +121,6 @@ base 0.75 (cover 98%)  since base match 0.0m  match 0.70 (avg 0.70)
 - 一台机器人一张图。不支持多机。
 - 机器人被搬到别处后需要手动告知：`egs init-pose` 或 `egs relocalize`。没有自动的绑架检测。
 - 冻结阈值还没对着参考轨迹标定过。
-- 一个已知的里程计缺陷：模拟房间里从静止沿着与墙平行的轴直线跑，曾观察到位姿一直停在原点。对应的回归测试暂时禁用，待查明原因。
 - agent 层 v0.2 的所有功能（导出为 Nav2 keep-out filter 掩码的禁区、在线删除正在建图的 session、`--json` 输出、`observe --attach`、`place save --offset`、`egs here` 里的匹配分、`/odom` 的 twist）都已通过测试，但尚未在实机上运行；禁区在 Nav2 那一侧也还没对着真实 Nav2 验证（KeepoutFilter 的配置在 ROS README 里）。
 
 只在一套住宅和公开数据集上评估过。欢迎开 issue。

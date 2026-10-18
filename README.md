@@ -172,6 +172,11 @@ Ceres refinement, submaps as probability grids, a pose graph with branch-and-bou
 Ceres optimization, then session-aware trimming, freezing and persistence with atomic commits.
 `core/` has no ROS dependency; ROS 2 is one adapter.
 
+Local alignment uses a temporary grid with neutral unknown cells, so sparse axis-aligned maps do
+not pin motion to a repeating lidar beam pattern. Stored grids, global matching and reported
+occupancy scores retain their original semantics. The frontend regression covers straight starts
+along all four room-axis headings with both default and zero-width angular searches.
+
 ## Field test
 
 On 2026-09-29 Claude Code drove the platform above through a flat. The agent had a small
@@ -236,9 +241,6 @@ kept here yet.
 - A robot carried elsewhere has to be told: `egs init-pose` or `egs relocalize`. There is no
   automatic kidnap detection.
 - The freeze thresholds have not been calibrated against a reference trajectory.
-- One known odometry defect: in the simulated room, a straight run from rest along a wall-aligned
-  axis has been observed to stay at the origin. The regression test is disabled until the cause is
-  understood.
 - Everything in agent layer v0.2 (keep-out zones as a Nav2 keep-out filter mask, in-process removal
   of the session being mapped, `--json` output, `observe --attach`, `place save --offset`, the
   match score in `egs here`, the `/odom` twist) passes its tests but has not run on the robot, and
